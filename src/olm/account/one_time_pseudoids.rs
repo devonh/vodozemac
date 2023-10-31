@@ -18,27 +18,44 @@ use serde::{Deserialize, Serialize};
 
 use super::PUBLIC_MAX_ONE_TIME_KEYS;
 use crate::{
-    types::{Curve25519SecretKey, KeyId},
-    Curve25519PublicKey,
+    types::{Ed25519SecretKey, KeyId},
+    Ed25519PublicKey,
 };
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 #[serde(from = "OneTimePseudoIDsPickle")]
 #[serde(into = "OneTimePseudoIDsPickle")]
 pub(super) struct OneTimePseudoIDs {
     pub next_key_id: u64,
-    pub unpublished_public_keys: BTreeMap<KeyId, Curve25519PublicKey>,
-    pub private_keys: BTreeMap<KeyId, Curve25519SecretKey>,
-    pub key_ids_by_key: HashMap<Curve25519PublicKey, KeyId>,
+    pub unpublished_public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
+    pub private_keys: BTreeMap<KeyId, Ed25519SecretKey>,
+    pub key_ids_by_key: HashMap<Ed25519PublicKey, KeyId>,
+}
+
+impl Clone for OneTimePseudoIDs {
+    fn clone(&self) -> Self {
+        let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
+
+        for (k, v) in self.private_keys.iter() {
+            private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
+        }
+
+        OneTimePseudoIDs {
+            next_key_id: self.next_key_id,
+            unpublished_public_keys: self.unpublished_public_keys.clone(),
+            private_keys,
+            key_ids_by_key: self.key_ids_by_key.clone(),
+        }
+    }
 }
 
 /// The result type for the one-time pseudoID generation operation.
 pub struct OneTimePseudoIDGenerationResult {
     /// The public part of the one-time pseudoIDs that were newly generated.
-    pub created: Vec<Curve25519PublicKey>,
+    pub created: Vec<Ed25519PublicKey>,
     /// The public part of the one-time pseudoIDs that had to be removed to make
     /// space for the new ones.
-    pub removed: Vec<Curve25519PublicKey>,
+    pub removed: Vec<Ed25519PublicKey>,
 }
 
 impl OneTimePseudoIDs {
@@ -57,31 +74,29 @@ impl OneTimePseudoIDs {
         self.unpublished_public_keys.clear();
     }
 
-    // pub fn get_secret_key(&self, public_key: &Curve25519PublicKey) ->
-    // Option<&Curve25519SecretKey> {     self.key_ids_by_key.get(public_key).
+    //pub fn get_secret_key(&self, public_key: &Ed25519PublicKey) ->
+    // Option<&Ed25519SecretKey> {    self.key_ids_by_key.get(public_key).
     // and_then(|key_id| self.private_keys.get(key_id)) }
 
-    // pub fn remove_secret_key(
-    //     &mut self,
-    //     public_key: &Curve25519PublicKey,
-    // ) -> Option<Curve25519SecretKey> {
-    //   self.key_ids_by_key.remove(public_key).and_then(|key_id| {
-    //   self.unpublished_public_keys.remove(&key_id);
-    //   self.private_keys.remove(&key_id) })
-    // }
+    pub fn remove_secret_key(&mut self, public_key: &Ed25519PublicKey) -> Option<Ed25519SecretKey> {
+        self.key_ids_by_key.remove(public_key).and_then(|key_id| {
+            self.unpublished_public_keys.remove(&key_id);
+            self.private_keys.remove(&key_id)
+        })
+    }
 
     pub(super) fn insert_secret_key(
         &mut self,
         key_id: KeyId,
-        key: Curve25519SecretKey,
+        key: Ed25519SecretKey,
         published: bool,
-    ) -> (Curve25519PublicKey, Option<Curve25519PublicKey>) {
+    ) -> (Ed25519PublicKey, Option<Ed25519PublicKey>) {
         // If we hit the max number of one-time pseudoIDs we'd like to keep, first
         // remove one before we create a new one.
         let removed = if self.private_keys.len() >= Self::MAX_ONE_TIME_PSEUDOIDS {
             if let Some(key_id) = self.private_keys.keys().next().copied() {
                 let public_key = if let Some(private_key) = self.private_keys.remove(&key_id) {
-                    let public_key = Curve25519PublicKey::from(&private_key);
+                    let public_key = private_key.public_key();
                     self.key_ids_by_key.remove(&public_key);
 
                     Some(public_key)
@@ -99,7 +114,7 @@ impl OneTimePseudoIDs {
             None
         };
 
-        let public_key = Curve25519PublicKey::from(&key);
+        let public_key = key.public_key();
 
         self.private_keys.insert(key_id, key);
         self.key_ids_by_key.insert(public_key, key_id);
@@ -111,19 +126,19 @@ impl OneTimePseudoIDs {
         (public_key, removed)
     }
 
-    fn generate_one_time_key(&mut self) -> (Curve25519PublicKey, Option<Curve25519PublicKey>) {
+    fn generate_one_time_key(&mut self) -> (Ed25519PublicKey, Option<Ed25519PublicKey>) {
         let key_id = KeyId(self.next_key_id);
-        let key = Curve25519SecretKey::new();
+        let key = Ed25519SecretKey::new();
         self.insert_secret_key(key_id, key, false)
     }
 
-    pub(crate) fn secret_keys(&self) -> &BTreeMap<KeyId, Curve25519SecretKey> {
-        &self.private_keys
-    }
+    //pub(crate) fn secret_keys(&self) -> &BTreeMap<KeyId, Ed25519SecretKey> {
+    //    &self.private_keys
+    //}
 
-    pub(crate) fn is_secret_key_published(&self, key_id: &KeyId) -> bool {
-        !self.unpublished_public_keys.contains_key(key_id)
-    }
+    //pub(crate) fn is_secret_key_published(&self, key_id: &KeyId) -> bool {
+    //    !self.unpublished_public_keys.contains_key(key_id)
+    //}
 
     pub fn generate(&mut self, count: usize) -> OneTimePseudoIDGenerationResult {
         let mut removed_keys = Vec::new();
@@ -144,12 +159,28 @@ impl OneTimePseudoIDs {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize)]
 pub(super) struct OneTimePseudoIDsPickle {
     #[serde(alias = "key_id")]
     next_key_id: u64,
-    public_keys: BTreeMap<KeyId, Curve25519PublicKey>,
-    private_keys: BTreeMap<KeyId, Curve25519SecretKey>,
+    public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
+    private_keys: BTreeMap<KeyId, Ed25519SecretKey>,
+}
+
+impl Clone for OneTimePseudoIDsPickle {
+    fn clone(&self) -> Self {
+        let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
+
+        for (k, v) in self.private_keys.iter() {
+            private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
+        }
+
+        OneTimePseudoIDsPickle {
+            next_key_id: self.next_key_id,
+            public_keys: self.public_keys.clone(),
+            private_keys,
+        }
+    }
 }
 
 impl From<OneTimePseudoIDsPickle> for OneTimePseudoIDs {
@@ -157,7 +188,7 @@ impl From<OneTimePseudoIDsPickle> for OneTimePseudoIDs {
         let mut key_ids_by_key = HashMap::new();
 
         for (k, v) in pickle.private_keys.iter() {
-            key_ids_by_key.insert(v.into(), *k);
+            key_ids_by_key.insert(v.public_key(), *k);
         }
 
         Self {

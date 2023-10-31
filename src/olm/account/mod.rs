@@ -15,6 +15,7 @@
 mod fallback_keys;
 mod one_time_keys;
 mod one_time_pseudoids;
+mod pseudoids;
 
 use std::collections::HashMap;
 
@@ -27,6 +28,7 @@ use self::{
     fallback_keys::FallbackKeys,
     one_time_keys::{OneTimeKeys, OneTimeKeysPickle},
     one_time_pseudoids::{OneTimePseudoIDs, OneTimePseudoIDsPickle},
+    pseudoids::{PseudoIDGenerationResult, PseudoIDs},
 };
 pub use self::{
     one_time_keys::OneTimeKeyGenerationResult, one_time_pseudoids::OneTimePseudoIDGenerationResult,
@@ -101,8 +103,9 @@ pub struct Account {
     /// The ephemeral (one-time) Curve25519 keys used as part of the 3DH.
     one_time_keys: OneTimeKeys,
     /// The ephemeral (one-time) Curve25519 keys used for pseudoid invites.
-    // TODO: Add a pseudoid room map here
     one_time_pseudoids: OneTimePseudoIDs,
+    /// The pseudoids in use by this account.
+    pseudoids: PseudoIDs,
     /// The ephemeral Curve25519 keys used in lieu of a one-time key as part of
     /// the 3DH, in case we run out of those. We keep track of both the current
     /// and the previous fallback key in any given moment.
@@ -117,6 +120,7 @@ impl Account {
             diffie_hellman_key: Curve25519Keypair::new(),
             one_time_keys: OneTimeKeys::new(),
             one_time_pseudoids: OneTimePseudoIDs::new(),
+            pseudoids: PseudoIDs::new(),
             fallback_keys: FallbackKeys::new(),
         }
     }
@@ -344,12 +348,38 @@ impl Account {
     ///
     /// The one-time pseudoids should be published to a server and marked as
     /// published using the `mark_pseudoids_as_published()` method.
-    pub fn one_time_pseudoids(&self) -> HashMap<KeyId, Curve25519PublicKey> {
+    pub fn one_time_pseudoids(&self) -> HashMap<KeyId, Ed25519PublicKey> {
         self.one_time_pseudoids
             .unpublished_public_keys
             .iter()
             .map(|(key_id, key)| (*key_id, *key))
             .collect()
+    }
+
+    pub fn generate_pseudoids(&mut self, count: usize) -> PseudoIDGenerationResult {
+        self.pseudoids.generate(count)
+    }
+
+    pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
+        self.pseudoids.add_pseudoid_room_mapping(room, pseudoid);
+    }
+
+    pub fn get_pseudoid_signing_key(
+        &self,
+        pseudoid: &Ed25519PublicKey,
+    ) -> Option<&crate::Ed25519SecretKey> {
+        self.pseudoids.get_secret_key(pseudoid)
+    }
+
+    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519PublicKey> {
+        self.pseudoids.get_pseudoid_for_room(room)
+    }
+
+    pub fn claim_one_time_pseudoid_for_room(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
+        if let Some(secret_key) = self.one_time_pseudoids.remove_secret_key(pseudoid) {
+            self.pseudoids.insert_secret_key(secret_key);
+            self.pseudoids.add_pseudoid_room_mapping(room, pseudoid);
+        }
     }
 
     /// Generate a single new fallback key.
@@ -404,6 +434,7 @@ impl Account {
             diffie_hellman_key: self.diffie_hellman_key.clone().into(),
             one_time_keys: self.one_time_keys.clone().into(),
             one_time_pseudoids: self.one_time_pseudoids.clone().into(),
+            pseudoids: self.pseudoids.clone().into(),
             fallback_keys: self.fallback_keys.clone(),
         }
     }
@@ -500,6 +531,7 @@ pub struct AccountPickle {
     diffie_hellman_key: Curve25519KeypairPickle,
     one_time_keys: OneTimeKeysPickle,
     one_time_pseudoids: OneTimePseudoIDsPickle,
+    pseudoids: PseudoIDs,
     fallback_keys: FallbackKeys,
 }
 
@@ -529,6 +561,7 @@ impl From<AccountPickle> for Account {
             diffie_hellman_key: pickle.diffie_hellman_key.into(),
             one_time_keys: pickle.one_time_keys.into(),
             one_time_pseudoids: pickle.one_time_pseudoids.into(),
+            pseudoids: pickle.pseudoids.into(),
             fallback_keys: pickle.fallback_keys,
         }
     }
@@ -543,6 +576,7 @@ mod libolm {
         fallback_keys::{FallbackKey, FallbackKeys},
         one_time_keys::OneTimeKeys,
         one_time_pseudoids::OneTimePseudoIDs,
+        pseudoids::PseudoIDs,
         Account,
     };
     use crate::{
@@ -627,7 +661,6 @@ mod libolm {
         public_curve25519_key: [u8; 32],
         private_curve25519_key: Box<[u8; 32]>,
         one_time_keys: Vec<OneTimeKey>,
-        one_time_pseudoids: Vec<OneTimeKey>,
         fallback_keys: FallbackKeysArray,
         next_key_id: u32,
     }
@@ -661,20 +694,6 @@ mod libolm {
                 })
                 .collect();
 
-            let one_time_pseudoids: Vec<_> = account
-                .one_time_pseudoids
-                .secret_keys()
-                .iter()
-                .filter_map(|(key_id, secret_key)| {
-                    Some(OneTimeKey {
-                        key_id: key_id.0.try_into().ok()?,
-                        published: account.one_time_pseudoids.is_secret_key_published(key_id),
-                        public_key: Curve25519PublicKey::from(secret_key).to_bytes(),
-                        private_key: secret_key.to_bytes(),
-                    })
-                })
-                .collect();
-
             let fallback_keys = FallbackKeysArray {
                 fallback_key: account
                     .fallback_keys
@@ -699,7 +718,6 @@ mod libolm {
                 public_curve25519_key: account.diffie_hellman_key.public_key().to_bytes(),
                 private_curve25519_key: account.diffie_hellman_key.secret_key().to_bytes(),
                 one_time_keys,
-                one_time_pseudoids,
                 fallback_keys,
                 next_key_id,
             }
@@ -719,16 +737,6 @@ mod libolm {
             }
 
             one_time_keys.next_key_id = pickle.next_key_id.into();
-
-            let mut one_time_pseudoids = OneTimePseudoIDs::new();
-
-            for key in &pickle.one_time_pseudoids {
-                let secret_key = Curve25519SecretKey::from_slice(&key.private_key);
-                let key_id = KeyId(key.key_id.into());
-                one_time_pseudoids.insert_secret_key(key_id, secret_key, key.published);
-            }
-
-            one_time_pseudoids.next_key_id = pickle.next_key_id.into();
 
             let fallback_keys = FallbackKeys {
                 key_id: pickle
@@ -753,7 +761,8 @@ mod libolm {
                     &pickle.private_curve25519_key,
                 ),
                 one_time_keys,
-                one_time_pseudoids,
+                one_time_pseudoids: OneTimePseudoIDs::new(), // TODO: cryptoIDs
+                pseudoids: PseudoIDs::new(),                 // TODO: cryptoIDs
                 fallback_keys,
             })
         }
