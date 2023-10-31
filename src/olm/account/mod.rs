@@ -14,6 +14,7 @@
 
 mod fallback_keys;
 mod one_time_keys;
+mod one_time_pseudoids;
 
 use std::collections::HashMap;
 
@@ -22,10 +23,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x25519_dalek::ReusableSecret;
 
-pub use self::one_time_keys::OneTimeKeyGenerationResult;
 use self::{
     fallback_keys::FallbackKeys,
     one_time_keys::{OneTimeKeys, OneTimeKeysPickle},
+    one_time_pseudoids::{OneTimePseudoIDs, OneTimePseudoIDsPickle},
+};
+pub use self::{
+    one_time_keys::OneTimeKeyGenerationResult, one_time_pseudoids::OneTimePseudoIDGenerationResult,
 };
 use super::{
     messages::PreKeyMessage,
@@ -96,6 +100,9 @@ pub struct Account {
     diffie_hellman_key: Curve25519Keypair,
     /// The ephemeral (one-time) Curve25519 keys used as part of the 3DH.
     one_time_keys: OneTimeKeys,
+    /// The ephemeral (one-time) Curve25519 keys used for pseudoid invites.
+    // TODO: Add a pseudoid room map here
+    one_time_pseudoids: OneTimePseudoIDs,
     /// The ephemeral Curve25519 keys used in lieu of a one-time key as part of
     /// the 3DH, in case we run out of those. We keep track of both the current
     /// and the previous fallback key in any given moment.
@@ -109,6 +116,7 @@ impl Account {
             signing_key: Ed25519Keypair::new(),
             diffie_hellman_key: Curve25519Keypair::new(),
             one_time_keys: OneTimeKeys::new(),
+            one_time_pseudoids: OneTimePseudoIDs::new(),
             fallback_keys: FallbackKeys::new(),
         }
     }
@@ -140,6 +148,25 @@ impl Account {
     /// libolm method returned the maximum amount of one-time keys the `Account`
     /// could hold and only half of those should be uploaded.
     pub fn max_number_of_one_time_keys(&self) -> usize {
+        // We tell clients to upload a limited amount of one-time keys, this
+        // amount is smaller than what we can store.
+        //
+        // We do this because a client might receive the count of uploaded keys
+        // from the server before they receive all the pre-key messages that
+        // used some of our one-time keys. This would mean that we would forget
+        // private one-time keys, since we're generating new ones, while we
+        // didn't yet receive the pre-key messages that used those one-time
+        // keys.
+        PUBLIC_MAX_ONE_TIME_KEYS
+    }
+
+    /// Get the maximum number of one-time pseudodis the client should keep on
+    /// the server.
+    ///
+    /// **Note**: this differs from the libolm method of the same name, the
+    /// libolm method returned the maximum amount of one-time keys the `Account`
+    /// could hold and only half of those should be uploaded.
+    pub fn max_number_of_one_time_pseudoids(&self) -> usize {
         // We tell clients to upload a limited amount of one-time keys, this
         // amount is smaller than what we can store.
         //
@@ -285,6 +312,18 @@ impl Account {
         self.one_time_keys.generate(count)
     }
 
+    /// Generates the supplied number of one time pseudoids.
+    /// Returns the public parts of the one-time keys that were created and
+    /// discarded.
+    ///
+    /// Our one-time key store inside the [`Account`] has a limited amount of
+    /// places for one-time keys, If we try to generate new ones while the store
+    /// is completely populated, the oldest one-time keys will get discarded
+    /// to make place for new ones.
+    pub fn generate_one_time_pseudoids(&mut self, count: usize) -> OneTimePseudoIDGenerationResult {
+        self.one_time_pseudoids.generate(count)
+    }
+
     pub fn stored_one_time_key_count(&self) -> usize {
         self.one_time_keys.private_keys.len()
     }
@@ -295,6 +334,18 @@ impl Account {
     /// published using the `mark_keys_as_published()` method.
     pub fn one_time_keys(&self) -> HashMap<KeyId, Curve25519PublicKey> {
         self.one_time_keys
+            .unpublished_public_keys
+            .iter()
+            .map(|(key_id, key)| (*key_id, *key))
+            .collect()
+    }
+
+    /// Get the currently unpublished one-time pseudoids.
+    ///
+    /// The one-time pseudoids should be published to a server and marked as
+    /// published using the `mark_pseudoids_as_published()` method.
+    pub fn one_time_pseudoids(&self) -> HashMap<KeyId, Curve25519PublicKey> {
+        self.one_time_pseudoids
             .unpublished_public_keys
             .iter()
             .map(|(key_id, key)| (*key_id, *key))
@@ -340,6 +391,11 @@ impl Account {
         self.fallback_keys.mark_as_published();
     }
 
+    /// Mark all currently unpublished one-time pseudoids as published.
+    pub fn mark_pseudoids_as_published(&mut self) {
+        self.one_time_pseudoids.mark_as_published();
+    }
+
     /// Convert the account into a struct which implements [`serde::Serialize`]
     /// and [`serde::Deserialize`].
     pub fn pickle(&self) -> AccountPickle {
@@ -347,6 +403,7 @@ impl Account {
             signing_key: self.signing_key.clone().into(),
             diffie_hellman_key: self.diffie_hellman_key.clone().into(),
             one_time_keys: self.one_time_keys.clone().into(),
+            one_time_pseudoids: self.one_time_pseudoids.clone().into(),
             fallback_keys: self.fallback_keys.clone(),
         }
     }
@@ -442,6 +499,7 @@ pub struct AccountPickle {
     signing_key: Ed25519KeypairPickle,
     diffie_hellman_key: Curve25519KeypairPickle,
     one_time_keys: OneTimeKeysPickle,
+    one_time_pseudoids: OneTimePseudoIDsPickle,
     fallback_keys: FallbackKeys,
 }
 
@@ -470,6 +528,7 @@ impl From<AccountPickle> for Account {
             signing_key: pickle.signing_key.into(),
             diffie_hellman_key: pickle.diffie_hellman_key.into(),
             one_time_keys: pickle.one_time_keys.into(),
+            one_time_pseudoids: pickle.one_time_pseudoids.into(),
             fallback_keys: pickle.fallback_keys,
         }
     }
@@ -483,6 +542,7 @@ mod libolm {
     use super::{
         fallback_keys::{FallbackKey, FallbackKeys},
         one_time_keys::OneTimeKeys,
+        one_time_pseudoids::OneTimePseudoIDs,
         Account,
     };
     use crate::{
@@ -567,6 +627,7 @@ mod libolm {
         public_curve25519_key: [u8; 32],
         private_curve25519_key: Box<[u8; 32]>,
         one_time_keys: Vec<OneTimeKey>,
+        one_time_pseudoids: Vec<OneTimeKey>,
         fallback_keys: FallbackKeysArray,
         next_key_id: u32,
     }
@@ -600,6 +661,20 @@ mod libolm {
                 })
                 .collect();
 
+            let one_time_pseudoids: Vec<_> = account
+                .one_time_pseudoids
+                .secret_keys()
+                .iter()
+                .filter_map(|(key_id, secret_key)| {
+                    Some(OneTimeKey {
+                        key_id: key_id.0.try_into().ok()?,
+                        published: account.one_time_pseudoids.is_secret_key_published(key_id),
+                        public_key: Curve25519PublicKey::from(secret_key).to_bytes(),
+                        private_key: secret_key.to_bytes(),
+                    })
+                })
+                .collect();
+
             let fallback_keys = FallbackKeysArray {
                 fallback_key: account
                     .fallback_keys
@@ -624,6 +699,7 @@ mod libolm {
                 public_curve25519_key: account.diffie_hellman_key.public_key().to_bytes(),
                 private_curve25519_key: account.diffie_hellman_key.secret_key().to_bytes(),
                 one_time_keys,
+                one_time_pseudoids,
                 fallback_keys,
                 next_key_id,
             }
@@ -643,6 +719,16 @@ mod libolm {
             }
 
             one_time_keys.next_key_id = pickle.next_key_id.into();
+
+            let mut one_time_pseudoids = OneTimePseudoIDs::new();
+
+            for key in &pickle.one_time_pseudoids {
+                let secret_key = Curve25519SecretKey::from_slice(&key.private_key);
+                let key_id = KeyId(key.key_id.into());
+                one_time_pseudoids.insert_secret_key(key_id, secret_key, key.published);
+            }
+
+            one_time_pseudoids.next_key_id = pickle.next_key_id.into();
 
             let fallback_keys = FallbackKeys {
                 key_id: pickle
@@ -667,6 +753,7 @@ mod libolm {
                     &pickle.private_curve25519_key,
                 ),
                 one_time_keys,
+                one_time_pseudoids,
                 fallback_keys,
             })
         }
