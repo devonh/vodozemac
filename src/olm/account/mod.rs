@@ -28,7 +28,7 @@ use self::{
     fallback_keys::FallbackKeys,
     one_time_keys::{OneTimeKeys, OneTimeKeysPickle},
     one_time_pseudoids::{OneTimePseudoIDs, OneTimePseudoIDsPickle},
-    pseudoids::{PseudoIDGenerationResult, PseudoIDs},
+    pseudoids::PseudoIDs,
 };
 pub use self::{
     one_time_keys::OneTimeKeyGenerationResult, one_time_pseudoids::OneTimePseudoIDGenerationResult,
@@ -46,7 +46,7 @@ use crate::{
         Ed25519Keypair, Ed25519KeypairPickle, Ed25519PublicKey, KeyId,
     },
     utilities::{pickle, unpickle},
-    Ed25519Signature, PickleError,
+    Ed25519SecretKey, Ed25519Signature, PickleError,
 };
 
 const PUBLIC_MAX_ONE_TIME_KEYS: usize = 50;
@@ -356,8 +356,10 @@ impl Account {
             .collect()
     }
 
-    pub fn generate_pseudoids(&mut self, count: usize) -> PseudoIDGenerationResult {
-        self.pseudoids.generate(count)
+    pub fn generate_pseudoid_for_room(&mut self, room: &str) -> Ed25519SecretKey {
+        let key = self.pseudoids.generate();
+        self.add_pseudoid_room_mapping(room, &key.public_key());
+        key
     }
 
     pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
@@ -367,12 +369,16 @@ impl Account {
     pub fn get_pseudoid_signing_key(
         &self,
         pseudoid: &Ed25519PublicKey,
-    ) -> Option<&crate::Ed25519SecretKey> {
+    ) -> Option<&Ed25519SecretKey> {
         self.pseudoids.get_secret_key(pseudoid)
     }
 
-    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519PublicKey> {
-        self.pseudoids.get_pseudoid_for_room(room)
+    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+        if let Some(pseudoid) = self.pseudoids.get_pseudoid_for_room(room) {
+            Some(pseudoid.copy())
+        } else {
+            None
+        }
     }
 
     pub fn claim_one_time_pseudoid_for_room(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {

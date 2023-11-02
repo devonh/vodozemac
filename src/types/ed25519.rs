@@ -204,6 +204,10 @@ impl Ed25519SecretKey {
         Self(key)
     }
 
+    pub fn copy(&self) -> Self {
+        Ed25519SecretKey::from_slice(&self.to_bytes())
+    }
+
     /// Get the byte representation of the secret key.
     pub fn to_bytes(&self) -> Box<[u8; 32]> {
         Box::new(self.0.to_bytes())

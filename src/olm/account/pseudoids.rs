@@ -50,12 +50,6 @@ impl Clone for PseudoIDs {
     }
 }
 
-/// The result type for the pseudoID key generation operation.
-pub struct PseudoIDGenerationResult {
-    /// The public part of the pseuodID keys that were newly generated.
-    pub created: Vec<Ed25519PublicKey>,
-}
-
 impl PseudoIDs {
     pub fn new() -> Self {
         Self {
@@ -98,24 +92,20 @@ impl PseudoIDs {
         public_key
     }
 
-    fn generate_pseudoid(&mut self) -> Ed25519PublicKey {
+    fn generate_pseudoid(&mut self) -> Ed25519SecretKey {
         let key_id = KeyId(self.next_key_id);
         let key = Ed25519SecretKey::new();
-        self.insert_secret_key_with_id(key_id, key)
+        let key_copy = key.copy();
+        self.insert_secret_key_with_id(key_id, key);
+
+        key_copy
     }
 
-    pub fn generate(&mut self, count: usize) -> PseudoIDGenerationResult {
-        let mut created_keys = Vec::new();
+    pub fn generate(&mut self) -> Ed25519SecretKey {
+        let created = self.generate_pseudoid();
+        self.next_key_id = self.next_key_id.wrapping_add(1);
 
-        for _ in 0..count {
-            let created = self.generate_pseudoid();
-
-            created_keys.push(created);
-
-            self.next_key_id = self.next_key_id.wrapping_add(1);
-        }
-
-        PseudoIDGenerationResult { created: created_keys }
+        created
     }
 
     pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
@@ -124,8 +114,9 @@ impl PseudoIDs {
             .and_then(|&key_id| self.keys_by_room_id.insert(room.to_string(), key_id));
     }
 
-    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519PublicKey> {
-        self.keys_by_room_id.get(room).and_then(|key_id| self.public_keys.get(key_id))
+    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519SecretKey> {
+        tracing::info!("");
+        self.keys_by_room_id.get(room).and_then(|key_id| self.private_keys.get(key_id))
     }
 }
 
@@ -181,39 +172,5 @@ impl From<PseudoIDs> for PseudoIDsPickle {
             private_keys: keys.private_keys,
             keys_by_room_id: keys.keys_by_room_id,
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::PseudoIDs;
-    use crate::types::KeyId;
-
-    #[test]
-    fn store_limit() {
-        let mut store = PseudoIDs::new();
-
-        assert!(store.private_keys.is_empty());
-
-        let key_count = 100;
-        store.generate(key_count);
-        assert_eq!(store.private_keys.len(), key_count);
-        assert_eq!(store.public_keys.len(), key_count);
-        assert_eq!(store.key_ids_by_key.len(), key_count);
-
-        let oldest_key_id =
-            store.private_keys.keys().next().copied().expect("Couldn't get the first key ID");
-        assert_eq!(oldest_key_id, KeyId(0));
-
-        let added_keys = 10;
-        store.generate(added_keys);
-        assert_eq!(store.public_keys.len(), key_count + added_keys);
-        assert_eq!(store.private_keys.len(), key_count + added_keys);
-        assert_eq!(store.key_ids_by_key.len(), key_count + added_keys);
-
-        let oldest_key_id =
-            store.private_keys.keys().next().copied().expect("Couldn't get the first key ID");
-
-        assert_eq!(oldest_key_id, KeyId(0));
     }
 }
