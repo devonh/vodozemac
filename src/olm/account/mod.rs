@@ -356,10 +356,12 @@ impl Account {
             .collect()
     }
 
-    pub fn generate_pseudoid_for_room(&mut self, room: &str) -> Ed25519SecretKey {
-        let key = self.pseudoids.generate();
+    pub fn generate_pseudoid(&mut self) -> Ed25519SecretKey {
+        self.pseudoids.generate()
+    }
+
+    pub fn associate_pseudoid_with_room(&mut self, room: &str, key: &Ed25519SecretKey) {
         self.add_pseudoid_room_mapping(room, &key.public_key());
-        key
     }
 
     pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {

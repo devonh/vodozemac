@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     types::{Ed25519SecretKey, KeyId},
@@ -109,13 +110,16 @@ impl PseudoIDs {
     }
 
     pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
-        self.key_ids_by_key
-            .get(pseudoid)
-            .and_then(|&key_id| self.keys_by_room_id.insert(room.to_string(), key_id));
+        if let Some(&key_id) = self.key_ids_by_key.get(pseudoid) {
+            self.keys_by_room_id.insert(room.to_string(), key_id);
+            tracing::info!("Added Pseudoid Room mapping for {:?}:{:?}", room, pseudoid.to_base64());
+        } else {
+            tracing::error!("Failed finding key_id for {:?}", pseudoid.to_base64());
+        }
     }
 
     pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519SecretKey> {
-        tracing::info!("");
+        info!("Room: {} Keys by room id: {:?}", room, self.keys_by_room_id);
         self.keys_by_room_id.get(room).and_then(|key_id| self.private_keys.get(key_id))
     }
 }
