@@ -383,10 +383,18 @@ impl Account {
         }
     }
 
-    pub fn claim_one_time_pseudoid_for_room(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
-        if let Some(secret_key) = self.one_time_pseudoids.remove_secret_key(pseudoid) {
+    pub fn claim_one_time_pseudoid_for_room(
+        &mut self,
+        room: &str,
+        pseudoid: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let key = Ed25519PublicKey::from_base64(pseudoid).unwrap();
+        if let Some(secret_key) = self.one_time_pseudoids.remove_secret_key(&key) {
             self.pseudoids.insert_secret_key(secret_key);
-            self.pseudoids.add_pseudoid_room_mapping(room, pseudoid);
+            self.pseudoids.add_pseudoid_room_mapping(room, &key);
+            Ok(())
+        } else {
+            Err(String::from("failed finding matching one-time pseudoid").into())
         }
     }
 

@@ -15,6 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use super::PUBLIC_MAX_ONE_TIME_KEYS;
 use crate::{
@@ -79,6 +80,7 @@ impl OneTimePseudoIDs {
     // and_then(|key_id| self.private_keys.get(key_id)) }
 
     pub fn remove_secret_key(&mut self, public_key: &Ed25519PublicKey) -> Option<Ed25519SecretKey> {
+        info!("Removing secret key for {}: Keys: {:?}", public_key, self.key_ids_by_key);
         self.key_ids_by_key.remove(public_key).and_then(|key_id| {
             self.unpublished_public_keys.remove(&key_id);
             self.private_keys.remove(&key_id)
@@ -191,6 +193,7 @@ impl From<OneTimePseudoIDsPickle> for OneTimePseudoIDs {
             key_ids_by_key.insert(v.public_key(), *k);
         }
 
+        info!("One-Time PseudoIDs: {:?}", key_ids_by_key);
         Self {
             next_key_id: pickle.next_key_id,
             unpublished_public_keys: pickle.public_keys.iter().map(|(&k, &v)| (k, v)).collect(),
