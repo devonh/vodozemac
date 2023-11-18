@@ -23,9 +23,9 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize)]
-#[serde(from = "PseudoIDsPickle")]
-#[serde(into = "PseudoIDsPickle")]
-pub(super) struct PseudoIDs {
+#[serde(from = "CryptoIDsPickle")]
+#[serde(into = "CryptoIDsPickle")]
+pub(super) struct CryptoIDs {
     pub next_key_id: u64,
     pub public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
     pub private_keys: BTreeMap<KeyId, Ed25519SecretKey>,
@@ -33,7 +33,7 @@ pub(super) struct PseudoIDs {
     pub keys_by_room_id: BTreeMap<String, KeyId>,
 }
 
-impl Clone for PseudoIDs {
+impl Clone for CryptoIDs {
     fn clone(&self) -> Self {
         let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
 
@@ -41,7 +41,7 @@ impl Clone for PseudoIDs {
             private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
         }
 
-        PseudoIDs {
+        CryptoIDs {
             next_key_id: self.next_key_id,
             public_keys: self.public_keys.clone(),
             private_keys,
@@ -51,7 +51,7 @@ impl Clone for PseudoIDs {
     }
 }
 
-impl PseudoIDs {
+impl CryptoIDs {
     pub fn new() -> Self {
         Self {
             next_key_id: 0,
@@ -93,7 +93,7 @@ impl PseudoIDs {
         public_key
     }
 
-    fn generate_pseudoid(&mut self) -> Ed25519SecretKey {
+    fn generate_cryptoid(&mut self) -> Ed25519SecretKey {
         let key_id = KeyId(self.next_key_id);
         let key = Ed25519SecretKey::new();
         let key_copy = key.copy();
@@ -103,29 +103,29 @@ impl PseudoIDs {
     }
 
     pub fn generate(&mut self) -> Ed25519SecretKey {
-        let created = self.generate_pseudoid();
+        let created = self.generate_cryptoid();
         self.next_key_id = self.next_key_id.wrapping_add(1);
 
         created
     }
 
-    pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
-        if let Some(&key_id) = self.key_ids_by_key.get(pseudoid) {
+    pub fn add_cryptoid_room_mapping(&mut self, room: &str, cryptoid: &Ed25519PublicKey) {
+        if let Some(&key_id) = self.key_ids_by_key.get(cryptoid) {
             self.keys_by_room_id.insert(room.to_string(), key_id);
-            tracing::info!("Added Pseudoid Room mapping for {:?}:{:?}", room, pseudoid.to_base64());
+            tracing::info!("Added Cryptoid Room mapping for {:?}:{:?}", room, cryptoid.to_base64());
         } else {
-            tracing::error!("Failed finding key_id for {:?}", pseudoid.to_base64());
+            tracing::error!("Failed finding key_id for {:?}", cryptoid.to_base64());
         }
     }
 
-    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<&Ed25519SecretKey> {
+    pub fn get_cryptoid_for_room(&self, room: &str) -> Option<&Ed25519SecretKey> {
         info!("Room: {} Keys by room id: {:?}", room, self.keys_by_room_id);
         self.keys_by_room_id.get(room).and_then(|key_id| self.private_keys.get(key_id))
     }
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct PseudoIDsPickle {
+pub(super) struct CryptoIDsPickle {
     #[serde(alias = "key_id")]
     next_key_id: u64,
     public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
@@ -133,7 +133,7 @@ pub(super) struct PseudoIDsPickle {
     keys_by_room_id: BTreeMap<String, KeyId>,
 }
 
-impl Clone for PseudoIDsPickle {
+impl Clone for CryptoIDsPickle {
     fn clone(&self) -> Self {
         let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
 
@@ -141,7 +141,7 @@ impl Clone for PseudoIDsPickle {
             private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
         }
 
-        PseudoIDsPickle {
+        CryptoIDsPickle {
             next_key_id: self.next_key_id,
             public_keys: self.public_keys.clone(),
             private_keys,
@@ -150,8 +150,8 @@ impl Clone for PseudoIDsPickle {
     }
 }
 
-impl From<PseudoIDsPickle> for PseudoIDs {
-    fn from(pickle: PseudoIDsPickle) -> Self {
+impl From<CryptoIDsPickle> for CryptoIDs {
+    fn from(pickle: CryptoIDsPickle) -> Self {
         let mut key_ids_by_key = HashMap::new();
 
         for (k, v) in pickle.private_keys.iter() {
@@ -168,9 +168,9 @@ impl From<PseudoIDsPickle> for PseudoIDs {
     }
 }
 
-impl From<PseudoIDs> for PseudoIDsPickle {
-    fn from(keys: PseudoIDs) -> Self {
-        PseudoIDsPickle {
+impl From<CryptoIDs> for CryptoIDsPickle {
+    fn from(keys: CryptoIDs) -> Self {
+        CryptoIDsPickle {
             next_key_id: keys.next_key_id,
             public_keys: keys.public_keys.iter().map(|(&k, &v)| (k, v)).collect(),
             private_keys: keys.private_keys,

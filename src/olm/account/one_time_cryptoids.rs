@@ -24,16 +24,16 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize)]
-#[serde(from = "OneTimePseudoIDsPickle")]
-#[serde(into = "OneTimePseudoIDsPickle")]
-pub(super) struct OneTimePseudoIDs {
+#[serde(from = "OneTimeCryptoIDsPickle")]
+#[serde(into = "OneTimeCryptoIDsPickle")]
+pub(super) struct OneTimeCryptoIDs {
     pub next_key_id: u64,
     pub unpublished_public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
     pub private_keys: BTreeMap<KeyId, Ed25519SecretKey>,
     pub key_ids_by_key: HashMap<Ed25519PublicKey, KeyId>,
 }
 
-impl Clone for OneTimePseudoIDs {
+impl Clone for OneTimeCryptoIDs {
     fn clone(&self) -> Self {
         let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
 
@@ -41,7 +41,7 @@ impl Clone for OneTimePseudoIDs {
             private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
         }
 
-        OneTimePseudoIDs {
+        OneTimeCryptoIDs {
             next_key_id: self.next_key_id,
             unpublished_public_keys: self.unpublished_public_keys.clone(),
             private_keys,
@@ -50,17 +50,17 @@ impl Clone for OneTimePseudoIDs {
     }
 }
 
-/// The result type for the one-time pseudoID generation operation.
-pub struct OneTimePseudoIDGenerationResult {
-    /// The public part of the one-time pseudoIDs that were newly generated.
+/// The result type for the one-time cryptoID generation operation.
+pub struct OneTimeCryptoIDGenerationResult {
+    /// The public part of the one-time cryptoIDs that were newly generated.
     pub created: Vec<Ed25519PublicKey>,
-    /// The public part of the one-time pseudoIDs that had to be removed to make
+    /// The public part of the one-time cryptoIDs that had to be removed to make
     /// space for the new ones.
     pub removed: Vec<Ed25519PublicKey>,
 }
 
-impl OneTimePseudoIDs {
-    const MAX_ONE_TIME_PSEUDOIDS: usize = 100 * PUBLIC_MAX_ONE_TIME_KEYS;
+impl OneTimeCryptoIDs {
+    const MAX_ONE_TIME_CRYPTOIDS: usize = 100 * PUBLIC_MAX_ONE_TIME_KEYS;
 
     pub fn new() -> Self {
         Self {
@@ -93,9 +93,9 @@ impl OneTimePseudoIDs {
         key: Ed25519SecretKey,
         published: bool,
     ) -> (Ed25519PublicKey, Option<Ed25519PublicKey>) {
-        // If we hit the max number of one-time pseudoIDs we'd like to keep, first
+        // If we hit the max number of one-time cryptoIDs we'd like to keep, first
         // remove one before we create a new one.
-        let removed = if self.private_keys.len() >= Self::MAX_ONE_TIME_PSEUDOIDS {
+        let removed = if self.private_keys.len() >= Self::MAX_ONE_TIME_CRYPTOIDS {
             if let Some(key_id) = self.private_keys.keys().next().copied() {
                 let public_key = if let Some(private_key) = self.private_keys.remove(&key_id) {
                     let public_key = private_key.public_key();
@@ -142,7 +142,7 @@ impl OneTimePseudoIDs {
     //    !self.unpublished_public_keys.contains_key(key_id)
     //}
 
-    pub fn generate(&mut self, count: usize) -> OneTimePseudoIDGenerationResult {
+    pub fn generate(&mut self, count: usize) -> OneTimeCryptoIDGenerationResult {
         let mut removed_keys = Vec::new();
         let mut created_keys = Vec::new();
 
@@ -157,19 +157,19 @@ impl OneTimePseudoIDs {
             self.next_key_id = self.next_key_id.wrapping_add(1);
         }
 
-        OneTimePseudoIDGenerationResult { created: created_keys, removed: removed_keys }
+        OneTimeCryptoIDGenerationResult { created: created_keys, removed: removed_keys }
     }
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct OneTimePseudoIDsPickle {
+pub(super) struct OneTimeCryptoIDsPickle {
     #[serde(alias = "key_id")]
     next_key_id: u64,
     public_keys: BTreeMap<KeyId, Ed25519PublicKey>,
     private_keys: BTreeMap<KeyId, Ed25519SecretKey>,
 }
 
-impl Clone for OneTimePseudoIDsPickle {
+impl Clone for OneTimeCryptoIDsPickle {
     fn clone(&self) -> Self {
         let mut private_keys: BTreeMap<KeyId, Ed25519SecretKey> = Default::default();
 
@@ -177,7 +177,7 @@ impl Clone for OneTimePseudoIDsPickle {
             private_keys.insert(*k, Ed25519SecretKey::from_slice(&*v.to_bytes()));
         }
 
-        OneTimePseudoIDsPickle {
+        OneTimeCryptoIDsPickle {
             next_key_id: self.next_key_id,
             public_keys: self.public_keys.clone(),
             private_keys,
@@ -185,15 +185,15 @@ impl Clone for OneTimePseudoIDsPickle {
     }
 }
 
-impl From<OneTimePseudoIDsPickle> for OneTimePseudoIDs {
-    fn from(pickle: OneTimePseudoIDsPickle) -> Self {
+impl From<OneTimeCryptoIDsPickle> for OneTimeCryptoIDs {
+    fn from(pickle: OneTimeCryptoIDsPickle) -> Self {
         let mut key_ids_by_key = HashMap::new();
 
         for (k, v) in pickle.private_keys.iter() {
             key_ids_by_key.insert(v.public_key(), *k);
         }
 
-        info!("One-Time PseudoIDs: {:?}", key_ids_by_key);
+        info!("One-Time CryptoIDs: {:?}", key_ids_by_key);
         Self {
             next_key_id: pickle.next_key_id,
             unpublished_public_keys: pickle.public_keys.iter().map(|(&k, &v)| (k, v)).collect(),
@@ -203,9 +203,9 @@ impl From<OneTimePseudoIDsPickle> for OneTimePseudoIDs {
     }
 }
 
-impl From<OneTimePseudoIDs> for OneTimePseudoIDsPickle {
-    fn from(keys: OneTimePseudoIDs) -> Self {
-        OneTimePseudoIDsPickle {
+impl From<OneTimeCryptoIDs> for OneTimeCryptoIDsPickle {
+    fn from(keys: OneTimeCryptoIDs) -> Self {
+        OneTimeCryptoIDsPickle {
             next_key_id: keys.next_key_id,
             public_keys: keys.unpublished_public_keys.iter().map(|(&k, &v)| (k, v)).collect(),
             private_keys: keys.private_keys,
@@ -215,24 +215,24 @@ impl From<OneTimePseudoIDs> for OneTimePseudoIDsPickle {
 
 #[cfg(test)]
 mod test {
-    use super::OneTimePseudoIDs;
+    use super::OneTimeCryptoIDs;
     use crate::types::KeyId;
 
     #[test]
     fn store_limit() {
-        let mut store = OneTimePseudoIDs::new();
+        let mut store = OneTimeCryptoIDs::new();
 
         assert!(store.private_keys.is_empty());
 
-        store.generate(OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
-        assert_eq!(store.private_keys.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
-        assert_eq!(store.unpublished_public_keys.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
-        assert_eq!(store.key_ids_by_key.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
+        store.generate(OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
+        assert_eq!(store.private_keys.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
+        assert_eq!(store.unpublished_public_keys.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
+        assert_eq!(store.key_ids_by_key.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
 
         store.mark_as_published();
         assert!(store.unpublished_public_keys.is_empty());
-        assert_eq!(store.private_keys.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
-        assert_eq!(store.key_ids_by_key.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
+        assert_eq!(store.private_keys.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
+        assert_eq!(store.key_ids_by_key.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
 
         let oldest_key_id =
             store.private_keys.keys().next().copied().expect("Couldn't get the first key ID");
@@ -240,8 +240,8 @@ mod test {
 
         store.generate(10);
         assert_eq!(store.unpublished_public_keys.len(), 10);
-        assert_eq!(store.private_keys.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
-        assert_eq!(store.key_ids_by_key.len(), OneTimePseudoIDs::MAX_ONE_TIME_PSEUDOIDS);
+        assert_eq!(store.private_keys.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
+        assert_eq!(store.key_ids_by_key.len(), OneTimeCryptoIDs::MAX_ONE_TIME_CRYPTOIDS);
 
         let oldest_key_id =
             store.private_keys.keys().next().copied().expect("Couldn't get the first key ID");

@@ -105,8 +105,8 @@ mod session_keys;
 mod shared_secret;
 
 pub use account::{
-    Account, AccountPickle, IdentityKeys, InboundCreationResult, OneTimeKeyGenerationResult,
-    OneTimePseudoIDGenerationResult, SessionCreationError,
+    Account, AccountPickle, IdentityKeys, InboundCreationResult, OneTimeCryptoIDGenerationResult,
+    OneTimeKeyGenerationResult, SessionCreationError,
 };
 pub use messages::{Message, MessageType, OlmMessage, PreKeyMessage};
 pub use session::{ratchet::RatchetPublicKey, DecryptionError, Session, SessionPickle};

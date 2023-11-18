@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod cryptoids;
 mod fallback_keys;
+mod one_time_cryptoids;
 mod one_time_keys;
-mod one_time_pseudoids;
-mod pseudoids;
 
 use std::collections::HashMap;
 
@@ -25,13 +25,13 @@ use thiserror::Error;
 use x25519_dalek::ReusableSecret;
 
 use self::{
+    cryptoids::CryptoIDs,
     fallback_keys::FallbackKeys,
+    one_time_cryptoids::{OneTimeCryptoIDs, OneTimeCryptoIDsPickle},
     one_time_keys::{OneTimeKeys, OneTimeKeysPickle},
-    one_time_pseudoids::{OneTimePseudoIDs, OneTimePseudoIDsPickle},
-    pseudoids::PseudoIDs,
 };
 pub use self::{
-    one_time_keys::OneTimeKeyGenerationResult, one_time_pseudoids::OneTimePseudoIDGenerationResult,
+    one_time_cryptoids::OneTimeCryptoIDGenerationResult, one_time_keys::OneTimeKeyGenerationResult,
 };
 use super::{
     messages::PreKeyMessage,
@@ -102,10 +102,10 @@ pub struct Account {
     diffie_hellman_key: Curve25519Keypair,
     /// The ephemeral (one-time) Curve25519 keys used as part of the 3DH.
     one_time_keys: OneTimeKeys,
-    /// The ephemeral (one-time) Curve25519 keys used for pseudoid invites.
-    one_time_pseudoids: OneTimePseudoIDs,
-    /// The pseudoids in use by this account.
-    pseudoids: PseudoIDs,
+    /// The ephemeral (one-time) Curve25519 keys used for cryptoid invites.
+    one_time_cryptoids: OneTimeCryptoIDs,
+    /// The cryptoids in use by this account.
+    cryptoids: CryptoIDs,
     /// The ephemeral Curve25519 keys used in lieu of a one-time key as part of
     /// the 3DH, in case we run out of those. We keep track of both the current
     /// and the previous fallback key in any given moment.
@@ -119,8 +119,8 @@ impl Account {
             signing_key: Ed25519Keypair::new(),
             diffie_hellman_key: Curve25519Keypair::new(),
             one_time_keys: OneTimeKeys::new(),
-            one_time_pseudoids: OneTimePseudoIDs::new(),
-            pseudoids: PseudoIDs::new(),
+            one_time_cryptoids: OneTimeCryptoIDs::new(),
+            cryptoids: CryptoIDs::new(),
             fallback_keys: FallbackKeys::new(),
         }
     }
@@ -164,13 +164,13 @@ impl Account {
         PUBLIC_MAX_ONE_TIME_KEYS
     }
 
-    /// Get the maximum number of one-time pseudodis the client should keep on
+    /// Get the maximum number of one-time cryptoids the client should keep on
     /// the server.
     ///
     /// **Note**: this differs from the libolm method of the same name, the
     /// libolm method returned the maximum amount of one-time keys the `Account`
     /// could hold and only half of those should be uploaded.
-    pub fn max_number_of_one_time_pseudoids(&self) -> usize {
+    pub fn max_number_of_one_time_cryptoids(&self) -> usize {
         // We tell clients to upload a limited amount of one-time keys, this
         // amount is smaller than what we can store.
         //
@@ -316,7 +316,7 @@ impl Account {
         self.one_time_keys.generate(count)
     }
 
-    /// Generates the supplied number of one time pseudoids.
+    /// Generates the supplied number of one time cryptoids.
     /// Returns the public parts of the one-time keys that were created and
     /// discarded.
     ///
@@ -324,8 +324,8 @@ impl Account {
     /// places for one-time keys, If we try to generate new ones while the store
     /// is completely populated, the oldest one-time keys will get discarded
     /// to make place for new ones.
-    pub fn generate_one_time_pseudoids(&mut self, count: usize) -> OneTimePseudoIDGenerationResult {
-        self.one_time_pseudoids.generate(count)
+    pub fn generate_one_time_cryptoids(&mut self, count: usize) -> OneTimeCryptoIDGenerationResult {
+        self.one_time_cryptoids.generate(count)
     }
 
     pub fn stored_one_time_key_count(&self) -> usize {
@@ -344,57 +344,57 @@ impl Account {
             .collect()
     }
 
-    /// Get the currently unpublished one-time pseudoids.
+    /// Get the currently unpublished one-time cryptoids.
     ///
-    /// The one-time pseudoids should be published to a server and marked as
-    /// published using the `mark_pseudoids_as_published()` method.
-    pub fn one_time_pseudoids(&self) -> HashMap<KeyId, Ed25519PublicKey> {
-        self.one_time_pseudoids
+    /// The one-time cryptoids should be published to a server and marked as
+    /// published using the `mark_cryptoids_as_published()` method.
+    pub fn one_time_cryptoids(&self) -> HashMap<KeyId, Ed25519PublicKey> {
+        self.one_time_cryptoids
             .unpublished_public_keys
             .iter()
             .map(|(key_id, key)| (*key_id, *key))
             .collect()
     }
 
-    pub fn generate_pseudoid(&mut self) -> Ed25519SecretKey {
-        self.pseudoids.generate()
+    pub fn generate_cryptoid(&mut self) -> Ed25519SecretKey {
+        self.cryptoids.generate()
     }
 
-    pub fn associate_pseudoid_with_room(&mut self, room: &str, key: &Ed25519SecretKey) {
-        self.add_pseudoid_room_mapping(room, &key.public_key());
+    pub fn associate_cryptoid_with_room(&mut self, room: &str, key: &Ed25519SecretKey) {
+        self.add_cryptoid_room_mapping(room, &key.public_key());
     }
 
-    pub fn add_pseudoid_room_mapping(&mut self, room: &str, pseudoid: &Ed25519PublicKey) {
-        self.pseudoids.add_pseudoid_room_mapping(room, pseudoid);
+    pub fn add_cryptoid_room_mapping(&mut self, room: &str, cryptoid: &Ed25519PublicKey) {
+        self.cryptoids.add_cryptoid_room_mapping(room, cryptoid);
     }
 
-    pub fn get_pseudoid_signing_key(
+    pub fn get_cryptoid_signing_key(
         &self,
-        pseudoid: &Ed25519PublicKey,
+        cryptoid: &Ed25519PublicKey,
     ) -> Option<&Ed25519SecretKey> {
-        self.pseudoids.get_secret_key(pseudoid)
+        self.cryptoids.get_secret_key(cryptoid)
     }
 
-    pub fn get_pseudoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
-        if let Some(pseudoid) = self.pseudoids.get_pseudoid_for_room(room) {
-            Some(pseudoid.copy())
+    pub fn get_cryptoid_for_room(&self, room: &str) -> Option<Ed25519SecretKey> {
+        if let Some(cryptoid) = self.cryptoids.get_cryptoid_for_room(room) {
+            Some(cryptoid.copy())
         } else {
             None
         }
     }
 
-    pub fn claim_one_time_pseudoid_for_room(
+    pub fn claim_one_time_cryptoid_for_room(
         &mut self,
         room: &str,
-        pseudoid: &str,
+        cryptoid: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let key = Ed25519PublicKey::from_base64(pseudoid).unwrap();
-        if let Some(secret_key) = self.one_time_pseudoids.remove_secret_key(&key) {
-            self.pseudoids.insert_secret_key(secret_key);
-            self.pseudoids.add_pseudoid_room_mapping(room, &key);
+        let key = Ed25519PublicKey::from_base64(cryptoid).unwrap();
+        if let Some(secret_key) = self.one_time_cryptoids.remove_secret_key(&key) {
+            self.cryptoids.insert_secret_key(secret_key);
+            self.cryptoids.add_cryptoid_room_mapping(room, &key);
             Ok(())
         } else {
-            Err(String::from("failed finding matching one-time pseudoid").into())
+            Err(String::from("failed finding matching one-time cryptoid").into())
         }
     }
 
@@ -437,9 +437,9 @@ impl Account {
         self.fallback_keys.mark_as_published();
     }
 
-    /// Mark all currently unpublished one-time pseudoids as published.
-    pub fn mark_pseudoids_as_published(&mut self) {
-        self.one_time_pseudoids.mark_as_published();
+    /// Mark all currently unpublished one-time cryptoids as published.
+    pub fn mark_cryptoids_as_published(&mut self) {
+        self.one_time_cryptoids.mark_as_published();
     }
 
     /// Convert the account into a struct which implements [`serde::Serialize`]
@@ -449,8 +449,8 @@ impl Account {
             signing_key: self.signing_key.clone().into(),
             diffie_hellman_key: self.diffie_hellman_key.clone().into(),
             one_time_keys: self.one_time_keys.clone().into(),
-            one_time_pseudoids: self.one_time_pseudoids.clone().into(),
-            pseudoids: self.pseudoids.clone().into(),
+            one_time_cryptoids: self.one_time_cryptoids.clone().into(),
+            cryptoids: self.cryptoids.clone().into(),
             fallback_keys: self.fallback_keys.clone(),
         }
     }
@@ -546,8 +546,8 @@ pub struct AccountPickle {
     signing_key: Ed25519KeypairPickle,
     diffie_hellman_key: Curve25519KeypairPickle,
     one_time_keys: OneTimeKeysPickle,
-    one_time_pseudoids: OneTimePseudoIDsPickle,
-    pseudoids: PseudoIDs,
+    one_time_cryptoids: OneTimeCryptoIDsPickle,
+    cryptoids: CryptoIDs,
     fallback_keys: FallbackKeys,
 }
 
@@ -576,8 +576,8 @@ impl From<AccountPickle> for Account {
             signing_key: pickle.signing_key.into(),
             diffie_hellman_key: pickle.diffie_hellman_key.into(),
             one_time_keys: pickle.one_time_keys.into(),
-            one_time_pseudoids: pickle.one_time_pseudoids.into(),
-            pseudoids: pickle.pseudoids.into(),
+            one_time_cryptoids: pickle.one_time_cryptoids.into(),
+            cryptoids: pickle.cryptoids.into(),
             fallback_keys: pickle.fallback_keys,
         }
     }
@@ -589,10 +589,10 @@ mod libolm {
     use zeroize::Zeroize;
 
     use super::{
+        cryptoids::CryptoIDs,
         fallback_keys::{FallbackKey, FallbackKeys},
+        one_time_cryptoids::OneTimeCryptoIDs,
         one_time_keys::OneTimeKeys,
-        one_time_pseudoids::OneTimePseudoIDs,
-        pseudoids::PseudoIDs,
         Account,
     };
     use crate::{
@@ -777,8 +777,8 @@ mod libolm {
                     &pickle.private_curve25519_key,
                 ),
                 one_time_keys,
-                one_time_pseudoids: OneTimePseudoIDs::new(), // TODO: cryptoIDs
-                pseudoids: PseudoIDs::new(),                 // TODO: cryptoIDs
+                one_time_cryptoids: OneTimeCryptoIDs::new(), // TODO: cryptoIDs
+                cryptoids: CryptoIDs::new(),                 // TODO: cryptoIDs
                 fallback_keys,
             })
         }
